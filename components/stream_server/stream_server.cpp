@@ -83,7 +83,7 @@ void StreamServerComponent::cleanup() {
 }
 
 void StreamServerComponent::read() {
-    size_t available = this->stream_->available();
+    int available = this->stream_->available();
 
     if (available > 0) {
         size_t len = std::min(available, this->rx_buffer_size_);
@@ -95,10 +95,10 @@ void StreamServerComponent::read() {
 }
 
 void StreamServerComponent::write() {
-    ssize_t len;
+    int len;
     for (Client &client : this->clients_) {
 	    while ((len = client.socket->read(tx_buf_.data(), tx_buffer_size_)) > 0){
-		    this->stream_->write_array(tx_buf_, len);
+		    this->stream_->write_array((const uint8_t*) tx_buf_.data(), len);
 	    }
 	    if (len == 0) {
 		    ESP_LOGD(TAG, "Client %s disconnected", client.identifier.c_str());
