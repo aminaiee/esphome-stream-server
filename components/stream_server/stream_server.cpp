@@ -83,11 +83,13 @@ void StreamServerComponent::cleanup() {
 }
 
 void StreamServerComponent::read() {
-    int len;
-    while ((len = this->stream_->available()) > 0) {
-        len = std::min(len, rx_buffer_size_);
+    size_t available = this->stream_->available();
+
+    if (available > 0) {
+        size_t len = std::min(available, this->rx_buffer_size_);
         this->stream_->read_array(rx_buf_.data(), len);
-        for (const Client &client : this->clients_)
+
+	for (const Client &client : this->clients_)
 	    client.socket->write((const char*)this->rx_buf_.data(), len);
     }
 }
