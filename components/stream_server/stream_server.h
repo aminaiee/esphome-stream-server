@@ -39,6 +39,8 @@ public:
 
     void set_port(uint16_t port) { this->port_ = port; }
 	int get_client_count() { return this->clients_.size(); }
+    void set_rx_buffer_size(size_t size) { rx_buffer_size_ = size; }
+    void set_tx_buffer_size(size_t size) { tx_buffer_size_ = size; }
 	
 protected:
     void accept();
@@ -57,5 +59,9 @@ protected:
     esphome::uart::UARTComponent *stream_{nullptr};
     std::unique_ptr<esphome::socket::Socket> socket_{};
     uint16_t port_{6638};
+    int rx_buffer_size_;
+    int tx_buffer_size_;
+    std::vector<uint8_t> rx_buf_;
+    std::vector<uint8_t> tx_buf_;
     std::vector<Client> clients_{};
 };

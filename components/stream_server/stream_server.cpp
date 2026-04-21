@@ -29,6 +29,8 @@ using namespace esphome;
 
 void StreamServerComponent::setup() {
     ESP_LOGCONFIG(TAG, "Setting up stream server...");
+    this->rx_buf_.resize(rx_buffer_size_);
+    this->tx_buf_.resize(tx_buffer_size_);
 
     struct sockaddr_in bind_addr = {
         .sin_len = sizeof(struct sockaddr_in),
@@ -83,26 +85,24 @@ void StreamServerComponent::cleanup() {
 void StreamServerComponent::read() {
     int len;
     while ((len = this->stream_->available()) > 0) {
-        char buf[128];
-        len = std::min(len, 128);
-        this->stream_->read_array(reinterpret_cast<uint8_t*>(buf), len);
+        len = std::min(len, rx_buffer_size_);
+        this->stream_->read_array(rx_buf_.data(), len);
         for (const Client &client : this->clients_)
-            client.socket->write(buf, len);
+	    client.socket->write((const char*)this->rx_buf_.data(), len);
     }
 }
 
 void StreamServerComponent::write() {
-    uint8_t buf[128];
     ssize_t len;
     for (Client &client : this->clients_) {
-        while ((len = client.socket->read(&buf, sizeof(buf))) > 0){
-            this->stream_->write_array(buf, len);
-		}
-        if (len == 0) {
-            ESP_LOGD(TAG, "Client %s disconnected", client.identifier.c_str());
-            client.disconnected = true;
-            continue;
-        }
+	    while ((len = client.socket->read(tx_buf_.data(), tx_buffer_size_)) > 0){
+		    this->stream_->write_array(tx_buf_, len);
+	    }
+	    if (len == 0) {
+		    ESP_LOGD(TAG, "Client %s disconnected", client.identifier.c_str());
+		    client.disconnected = true;
+		    continue;
+	    }
     }
 }
 

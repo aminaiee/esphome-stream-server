@@ -25,6 +25,9 @@ AUTO_LOAD = ["socket", "binary_sensor"]
 
 DEPENDENCIES = ["uart", "network"]
 
+CONF_RX_BUFFER_SIZE = "rx_buffer_size"
+CONF_TX_BUFFER_SIZE = "tx_buffer_size"
+
 MULTI_CONF = True
 
 ns = cg.global_ns
@@ -34,17 +37,21 @@ CONFIG_SCHEMA = (
 	cv.Schema(
 		{
 			cv.GenerateID(): cv.declare_id(StreamServerComponent),
-			cv.Optional(CONF_PORT): cv.port,
+			cv.Optional(CONF_PORT, default=6638): cv.port,
+			cv.Optional(CONF_RX_BUFFER_SIZE, default=128): cv.positive_not_null_int,
+			cv.Optional(CONF_TX_BUFFER_SIZE, default=128): cv.positive_not_null_int,
 		}
 	)
 		.extend(cv.COMPONENT_SCHEMA)
 		.extend(uart.UART_DEVICE_SCHEMA)
 )
 
+
 def to_code(config):
 	var = cg.new_Pvariable(config[CONF_ID])
-	if CONF_PORT in config:
-		cg.add(var.set_port(config[CONF_PORT]))
+	cg.add(var.set_port(config[CONF_PORT]))
+	cg.add(var.set_rx_buffer_size(config[CONF_RX_BUFFER_SIZE]))
+	cg.add(var.set_tx_buffer_size(config[CONF_TX_BUFFER_SIZE]))
 
 	yield cg.register_component(var, config)
 	yield uart.register_uart_device(var, config)
