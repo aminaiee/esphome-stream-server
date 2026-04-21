@@ -46,8 +46,6 @@ void StreamServerComponent::setup() {
     struct timeval timeout;      
     timeout.tv_sec = 0;
     timeout.tv_usec = 20000; // ESPHome recommends 20-30 ms max for timeouts
-    
-    this->socket_->setsockopt(SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
     this->socket_->setsockopt(SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
   
     this->socket_->bind(reinterpret_cast<struct sockaddr *>(&bind_addr), sizeof(struct sockaddr_in));
@@ -71,6 +69,10 @@ void StreamServerComponent::accept() {
         return;
 
     socket->setblocking(false);
+
+    int enable = 1;
+    socket->setsockopt(IPPROTO_TCP, TCP_NODELAY, &enable, sizeof(int));
+
     std::string identifier = inet_ntoa(client_addr.sin_addr);
     this->clients_.emplace_back(std::move(socket), identifier);
     ESP_LOGD(TAG, "New client connected from %s", identifier.c_str());
@@ -89,21 +91,32 @@ void StreamServerComponent::read() {
         size_t len = std::min(available, this->rx_buffer_size_);
         this->stream_->read_array(rx_buf_.data(), len);
 
-	for (const Client &client : this->clients_)
-	    client.socket->write((const char*)this->rx_buf_.data(), len);
+	for (Client &client : this->clients_)
+	    if (!client.disconnected) {
+	        ssize_t written = client.socket->write((const char*)this->rx_buf_.data(), len);
+		if (written < 0 && errno != EAGAIN) {
+			client.disconnected = true;
+		}
+	    }
     }
 }
 
 void StreamServerComponent::write() {
     int len;
     for (Client &client : this->clients_) {
+	    if (client.disconnected) continue;
+
 	    while ((len = client.socket->read(tx_buf_.data(), tx_buffer_size_)) > 0){
 		    this->stream_->write_array((const uint8_t*) tx_buf_.data(), len);
 	    }
+
 	    if (len == 0) {
 		    ESP_LOGD(TAG, "Client %s disconnected", client.identifier.c_str());
 		    client.disconnected = true;
 		    continue;
+	    } else if (len < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+		    ESP_LOGW(TAG, "Socket error on %s: %d", client.identifier.c_str(), errno);
+		    client.disconnected = true;
 	    }
     }
 }
