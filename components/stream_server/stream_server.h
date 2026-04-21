@@ -38,30 +38,21 @@ public:
     float get_setup_priority() const override { return esphome::setup_priority::AFTER_WIFI; }
 
     void set_port(uint16_t port) { this->port_ = port; }
-	int get_client_count() { return this->clients_.size(); }
+    int get_client_count() { return this->client_ != nullptr ? 1 : 0; }
     void set_rx_buffer_size(size_t size) { rx_buffer_size_ = size; }
     void set_tx_buffer_size(size_t size) { tx_buffer_size_ = size; }
 	
 protected:
     void accept();
-    void cleanup();
-    void read();
-    void write();
-
-    struct Client {
-        Client(std::unique_ptr<esphome::socket::Socket> socket, std::string identifier);
-
-        std::unique_ptr<esphome::socket::Socket> socket{nullptr};
-        std::string identifier{};
-        bool disconnected{false};
-    };
+    void read_uart_to_tcp();
+    void write_tcp_to_uart();
 
     esphome::uart::UARTComponent *stream_{nullptr};
     std::unique_ptr<esphome::socket::Socket> socket_{};
     uint16_t port_{6638};
-    int rx_buffer_size_;
-    int tx_buffer_size_;
+    int rx_buffer_size_{128};
+    int tx_buffer_size_{128};
     std::vector<uint8_t> rx_buf_;
     std::vector<uint8_t> tx_buf_;
-    std::vector<Client> clients_{};
+    std::unique_ptr<esphome::socket::Socket> client_{nullptr};
 };

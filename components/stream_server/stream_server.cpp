@@ -47,77 +47,65 @@ void StreamServerComponent::setup() {
     timeout.tv_sec = 0;
     timeout.tv_usec = 20000; // ESPHome recommends 20-30 ms max for timeouts
     this->socket_->setsockopt(SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
+    this->socket_->setblocking(false);
   
     this->socket_->bind(reinterpret_cast<struct sockaddr *>(&bind_addr), sizeof(struct sockaddr_in));
-    this->socket_->listen(8);
+    this->socket_->listen(1);
 
 
 }
 
 void StreamServerComponent::loop() {
-    this->accept();
-    this->read();
-    this->write();
-    this->cleanup();
+    if (!this->client_) {
+      accept();
+    } else {
+      read_uart_to_tcp();
+      write_tcp_to_uart();
+    }
 }
 
 void StreamServerComponent::accept() {
     struct sockaddr_in client_addr;
     socklen_t client_addrlen = sizeof(struct sockaddr_in);
-    std::unique_ptr<socket::Socket> socket = this->socket_->accept(reinterpret_cast<struct sockaddr *>(&client_addr), &client_addrlen);
-    if (!socket)
-        return;
+    this->client_ = this->socket_->accept(reinterpret_cast<struct sockaddr *>(&client_addr), &client_addrlen);
 
-    socket->setblocking(false);
+    if (this->client_) {
+      this->client_->setblocking(false);
+      int enable = 1;
+      this->client_->setsockopt(IPPROTO_TCP, TCP_NODELAY, &enable, sizeof(int));
 
-    int enable = 1;
-    socket->setsockopt(IPPROTO_TCP, TCP_NODELAY, &enable, sizeof(int));
-
-    std::string identifier = inet_ntoa(client_addr.sin_addr);
-    this->clients_.emplace_back(std::move(socket), identifier);
-    ESP_LOGD(TAG, "New client connected from %s", identifier.c_str());
+      std::string identifier = inet_ntoa(client_addr.sin_addr);
+      ESP_LOGD(TAG, "New client connected from %s", identifier.c_str());
+    }
 }
 
-void StreamServerComponent::cleanup() {
-    auto discriminator = [](const Client &client) { return !client.disconnected; };
-    auto last_client = std::partition(this->clients_.begin(), this->clients_.end(), discriminator);
-    this->clients_.erase(last_client, this->clients_.end());
-}
-
-void StreamServerComponent::read() {
+void StreamServerComponent::read_uart_to_tcp() {
     int available = this->stream_->available();
-
     if (available > 0) {
         size_t len = std::min(available, this->rx_buffer_size_);
         this->stream_->read_array(rx_buf_.data(), len);
 
-	for (Client &client : this->clients_)
-	    if (!client.disconnected) {
-	        ssize_t written = client.socket->write((const char*)this->rx_buf_.data(), len);
-		if (written < 0 && errno != EAGAIN) {
-			client.disconnected = true;
-		}
-	    }
+        if (this->client_) {
+	  ssize_t written = this->client_->write((const char*)this->rx_buf_.data(), len);
+	  if (written < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+		this->client_.reset();
+	  }
+	}
     }
 }
 
-void StreamServerComponent::write() {
-    int len;
-    for (Client &client : this->clients_) {
-	    if (client.disconnected) continue;
+void StreamServerComponent::write_tcp_to_uart() {
+    if (!this->client_) return;
 
-	    while ((len = client.socket->read(tx_buf_.data(), tx_buffer_size_)) > 0){
-		    this->stream_->write_array((const uint8_t*) tx_buf_.data(), len);
-	    }
-
-	    if (len == 0) {
-		    ESP_LOGD(TAG, "Client %s disconnected", client.identifier.c_str());
-		    client.disconnected = true;
-		    continue;
-	    } else if (len < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-		    ESP_LOGW(TAG, "Socket error on %s: %d", client.identifier.c_str(), errno);
-		    client.disconnected = true;
-	    }
+    int len = this->client_->read(tx_buf_.data(), tx_buffer_size_);
+    if (len > 0) {
+       this->stream_->write_array((const uint8_t*) tx_buf_.data(), len);
+    } else if (len == 0) {
+        ESP_LOGD(TAG, "Client disconnected");
+        this->client_.reset();
+    } else if (len < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+        ESP_LOGW(TAG, "Socket error: %d", errno);
+        this->client_.reset();
     }
 }
 
@@ -135,11 +123,9 @@ void StreamServerComponent::dump_config() {
 }
 
 void StreamServerComponent::on_shutdown() {
-    for (const Client &client : this->clients_)
-        client.socket->shutdown(SHUT_RDWR);
+    if (this->client_) {
+      this->client_->shutdown(SHUT_RDWR);
+      this->client_.reset();
+    }
 }
 
-StreamServerComponent::Client::Client(std::unique_ptr<esphome::socket::Socket> socket, std::string identifier)
-    : socket(std::move(socket)), identifier{identifier}
-{
-}
